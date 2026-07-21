@@ -30,17 +30,13 @@ function calcularEdad(fechaNacStr) {
     return isNaN(edad) ? '-' : edad;
 }
 
-// Geocodificación optimizada para no saturar el servidor de mapas
 async function obtenerCalleRiobambaConPausa(lat, lon, id, index) {
     if (!lat || !lon) return;
     const coords = `${parseFloat(lat).toFixed(3)},${parseFloat(lon).toFixed(3)}`;
-    
     if (cacheDirecciones[coords]) { 
         actualizarCeldaDireccion(id, cacheDirecciones[coords]); 
         return; 
     }
-
-    // Retraso escalonado para evitar bloqueo de la API de calles
     setTimeout(async () => {
         try {
             const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18`);
@@ -51,7 +47,7 @@ async function obtenerCalleRiobambaConPausa(lat, lon, id, index) {
         } catch (e) { 
             actualizarCeldaDireccion(id, "Riobamba (GPS Urbano)"); 
         }
-    }, index * 400); 
+    }, index * 300);
 }
 
 function actualizarCeldaDireccion(id, dir) { 
@@ -60,37 +56,33 @@ function actualizarCeldaDireccion(id, dir) {
 }
 
 // ==========================================
-// 📡 CONSUMO INTELIGENTE DE SUPABASE
+// 📡 CARGA INICIAL DE DATOS
 // ==========================================
-async function cargarDatosEnVivo() {
+async function cargarDatosIniciales() {
     try {
         const response = await fetch(`${SUPABASE_URL}/rest/v1/alertas?select=*`, {
-            headers: { 
-                'apikey': SUPABASE_KEY, 
-                'Authorization': `Bearer ${SUPABASE_KEY}` 
-            }
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
         });
-        
         if (!response.ok) throw new Error("Error de conexión");
         
-        const nuevosDatos = await response.json();
-        
-        // Solo actualizamos la interfaz si hay cambios reales en la cantidad de alertas
-        if (JSON.stringify(nuevosDatos) !== JSON.stringify(rawEmergenciasData)) {
-            rawEmergenciasData = nuevosDatos;
-            aplicarFiltros();
-        }
-
-        const statusBadge = document.getElementById('statusGeoServer');
-        if(statusBadge) {
-            statusBadge.className = "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center";
-            statusBadge.innerHTML = '<i class="fa-solid fa-cloud text-emerald-400 mr-2"></i> En Línea (SICOA)';
-        }
+        rawEmergenciasData = await response.json();
+        aplicarFiltros();
+        actualizarEstadoConexion(true);
     } catch (e) {
-        const statusBadge = document.getElementById('statusGeoServer');
-        if(statusBadge) {
+        actualizarEstadoConexion(false);
+    }
+}
+
+function actualizarEstadoConexion(conectado) {
+    const statusBadge = document.getElementById('statusGeoServer');
+    if(statusBadge) {
+        if (conectado) {
+            // 👇 AQUÍ ESTÁ LA ETIQUETA DEL WEBSOCKET
+            statusBadge.className = "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center shadow-inner";
+            statusBadge.innerHTML = '<i class="fa-solid fa-satellite-dish text-emerald-400 mr-2 animate-pulse"></i> WebSocket Realtime Activo';
+        } else {
             statusBadge.className = "bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-full border border-red-500/30 flex items-center";
-            statusBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2 animate-pulse"></i> Sin conexión';
+            statusBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
         }
     }
 }
@@ -127,7 +119,7 @@ function renderizarUI(lista) {
         const marker = L.marker([item.latitud, item.longitud], { icon: iconAlert });
         const popupHTML = `
             <div class="font-sans text-xs">
-                <div class="bg-red-600 text-white font-bold p-2 -m-3 mb-2 rounded-t-lg">🚨 ALERTA #${item.id}</div>
+                <div class="bg-red-600 text-white font-bold p-2 -m-3 mb-2 rounded-t-lg">🚨 ALERTA REALTIME #${item.id}</div>
                 <p class="mt-2 text-sm font-bold text-slate-800">${escapeHTML(item.nombres || 'Ciudadano')} ${escapeHTML(item.apellidos || '')}</p>
                 <p class="text-xs text-red-600 font-bold mt-1">Tipo: ${escapeHTML(item.descripcion || 'Emergencia')}</p>
                 <div class="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded mt-2">
@@ -143,7 +135,6 @@ function renderizarUI(lista) {
         tr.className = "hover:bg-indigo-50 transition cursor-pointer group";
         tr.onclick = () => enfocarAlerta(item.id, item.latitud, item.longitud);
         
-        // Llamada optimizada con retraso para las calles
         obtenerCalleRiobambaConPausa(item.latitud, item.longitud, item.id, index);
 
         const fechaCruda = item.created_at || item.fecha_hora;
@@ -174,12 +165,66 @@ function aplicarFiltros() {
     renderizarUI(filtrados);
 }
 
+// ==========================================
+// ⚡ CONEXIÓN WEBSOCKET REAL (SUPABASE REALTIME)
+// ==========================================
+function inicializarWebSocketRealtime() {
+    const wsUrl = `wss://phsaujoiuayfzwydxygo.supabase.co/realtime/v1/websocket?apikey=${SUPABASE_KEY}&vsn=1.0.0`;
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+        console.log("WebSocket conectado con Supabase");
+        const joinPayload = {
+            "topic": "realtime:public:alertas",
+            "event": "phx_join",
+            "payload": {
+                "config": {
+                    "postgres_changes": [{ "event": "INSERT", "schema": "public", "table": "alertas" }]
+                }
+            },
+            "ref": "1"
+        };
+        socket.send(JSON.stringify(joinPayload));
+        
+        setInterval(() => {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ "topic": "phoenix", "event": "heartbeat", "payload": {}, "ref": "hb" }));
+            }
+        }, 30000);
+    };
+
+    socket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.event === "postgres_changes" && data.payload && data.payload.data) {
+                const nuevaAlerta = data.payload.data.record;
+                console.log("¡Nueva alerta en tiempo real por WebSocket!", nuevaAlerta);
+                
+                rawEmergenciasData.unshift(nuevaAlerta);
+                aplicarFiltros();
+                
+                if (nuevaAlerta.latitud && nuevaAlerta.longitud) {
+                    enfocarAlerta(nuevaAlerta.id, nuevaAlerta.latitud, nuevaAlerta.longitud);
+                }
+            }
+        } catch (err) {
+            console.error("Error procesando mensaje WebSocket:", err);
+        }
+    };
+
+    socket.onerror = () => {
+        console.warn("WebSocket desconectado. Intentando modo clásico...");
+        cargarDatosIniciales();
+    };
+}
+
+// Listeners
 const btnFiltro = document.getElementById('btnAplicarFiltros');
 if(btnFiltro) btnFiltro.addEventListener('click', aplicarFiltros);
 
 const btnRefresh = document.getElementById('btnRefresh');
-if(btnRefresh) btnRefresh.addEventListener('click', cargarDatosEnVivo);
+if(btnRefresh) btnRefresh.addEventListener('click', cargarDatosIniciales);
 
-// Carga inicial y bucle de sondeo cada 4 segundos
-cargarDatosEnVivo();
-setInterval(cargarDatosEnVivo, 4000);
+// Arrancar sistema
+cargarDatosIniciales();
+inicializarWebSocketRealtime(); // 🚀 ¡Canal WebSocket real activo!
