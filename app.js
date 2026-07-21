@@ -4,13 +4,12 @@
 const RIOBAMBA_CENTER = [-1.665, -78.654];
 const map = L.map('map').setView(RIOBAMBA_CENTER, 14);
 
-// Mapa Base de Calles Públicas (Compatible con HTTPS para Vercel)
 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© OpenStreetMap, © CartoDB'
 }).addTo(map);
 
 // ==========================================
-// 🔑 CREDENCIALES DE SUPABASE (Geoportal)
+// 🔑 CREDENCIALES DE SUPABASE
 // ==========================================
 const SUPABASE_URL = 'https://phsaujoiuayfzwydxygo.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoc2F1am9pdWF5Znp3eWR4eWdvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2MzU4NjIsImV4cCI6MjEwMDIxMTg2Mn0.drMcjGEiZmVFGYgpPz1u2PN0M1bu_8PXRpD1rGBr7Gg';
@@ -18,8 +17,8 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const emergenciasLayerGroup = L.layerGroup().addTo(map);
 let rawEmergenciasData = [];
 let marcadoresGuardados = {};
+const cacheDirecciones = {};
 
-// Funciones de utilidad y seguridad XSS
 function escapeHTML(str) { 
     return str ? String(str).replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]) : ''; 
 }
@@ -31,24 +30,28 @@ function calcularEdad(fechaNacStr) {
     return isNaN(edad) ? '-' : edad;
 }
 
-// Geocodificación inversa (Calles de Riobamba mediante OpenStreetMap)
-const cacheDirecciones = {};
-async function obtenerCalleRiobamba(lat, lon, id) {
+// Geocodificación optimizada para no saturar el servidor de mapas
+async function obtenerCalleRiobambaConPausa(lat, lon, id, index) {
     if (!lat || !lon) return;
-    const coords = `${parseFloat(lat).toFixed(4)},${parseFloat(lon).toFixed(4)}`;
+    const coords = `${parseFloat(lat).toFixed(3)},${parseFloat(lon).toFixed(3)}`;
+    
     if (cacheDirecciones[coords]) { 
         actualizarCeldaDireccion(id, cacheDirecciones[coords]); 
         return; 
     }
-    try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18`);
-        const data = await res.json();
-        let direccion = (data.display_name || "").split(',').slice(0, 2).join(', ') + ', Riobamba';
-        cacheDirecciones[coords] = direccion;
-        actualizarCeldaDireccion(id, direccion);
-    } catch (e) { 
-        actualizarCeldaDireccion(id, "Riobamba (GPS)"); 
-    }
+
+    // Retraso escalonado para evitar bloqueo de la API de calles
+    setTimeout(async () => {
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18`);
+            const data = await res.json();
+            let direccion = (data.display_name || "").split(',').slice(0, 2).join(', ') + ', Riobamba';
+            cacheDirecciones[coords] = direccion;
+            actualizarCeldaDireccion(id, direccion);
+        } catch (e) { 
+            actualizarCeldaDireccion(id, "Riobamba (GPS Urbano)"); 
+        }
+    }, index * 400); 
 }
 
 function actualizarCeldaDireccion(id, dir) { 
@@ -57,7 +60,7 @@ function actualizarCeldaDireccion(id, dir) {
 }
 
 // ==========================================
-// 📡 CONSUMO DE DATOS EN TIEMPO REAL (SUPABASE)
+// 📡 CONSUMO INTELIGENTE DE SUPABASE
 // ==========================================
 async function cargarDatosEnVivo() {
     try {
@@ -68,18 +71,21 @@ async function cargarDatosEnVivo() {
             }
         });
         
-        if (!response.ok) throw new Error("Fallo al conectar con la base de datos");
+        if (!response.ok) throw new Error("Error de conexión");
         
-        rawEmergenciasData = await response.json();
+        const nuevosDatos = await response.json();
+        
+        // Solo actualizamos la interfaz si hay cambios reales en la cantidad de alertas
+        if (JSON.stringify(nuevosDatos) !== JSON.stringify(rawEmergenciasData)) {
+            rawEmergenciasData = nuevosDatos;
+            aplicarFiltros();
+        }
 
-        // Indicador visual en verde (Conectado)
         const statusBadge = document.getElementById('statusGeoServer');
         if(statusBadge) {
             statusBadge.className = "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center";
-            statusBadge.innerHTML = '<i class="fa-solid fa-cloud text-emerald-400 mr-2"></i> Conectado a la Nube';
+            statusBadge.innerHTML = '<i class="fa-solid fa-cloud text-emerald-400 mr-2"></i> En Línea (SICOA)';
         }
-        
-        aplicarFiltros();
     } catch (e) {
         const statusBadge = document.getElementById('statusGeoServer');
         if(statusBadge) {
@@ -89,7 +95,6 @@ async function cargarDatosEnVivo() {
     }
 }
 
-// Renderizar UI (Tabla de despacho y Mapa interactivo)
 function enfocarAlerta(id, lat, lon) {
     map.flyTo([lat, lon], 17, { animate: true, duration: 1.5 });
     setTimeout(() => { if (marcadoresGuardados[id]) marcadoresGuardados[id].openPopup(); }, 1500);
@@ -102,14 +107,13 @@ function renderizarUI(lista) {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    // Ordenamiento seguro evaluando created_at o fecha_hora
     const listaOrdenada = [...lista].sort((a,b) => {
         const fechaA = new Date(a.created_at || a.fecha_hora || 0);
         const fechaB = new Date(b.created_at || b.fecha_hora || 0);
         return fechaB - fechaA;
     });
 
-    listaOrdenada.forEach(item => {
+    listaOrdenada.forEach((item, index) => {
         if (!item.latitud || !item.longitud) return;
 
         const edad = calcularEdad(item.fecha_nacimiento);
@@ -139,7 +143,8 @@ function renderizarUI(lista) {
         tr.className = "hover:bg-indigo-50 transition cursor-pointer group";
         tr.onclick = () => enfocarAlerta(item.id, item.latitud, item.longitud);
         
-        obtenerCalleRiobamba(item.latitud, item.longitud, item.id);
+        // Llamada optimizada con retraso para las calles
+        obtenerCalleRiobambaConPausa(item.latitud, item.longitud, item.id, index);
 
         const fechaCruda = item.created_at || item.fecha_hora;
         const horaFormateada = fechaCruda ? new Date(fechaCruda).toLocaleTimeString() : 'Recién';
@@ -158,7 +163,6 @@ function renderizarUI(lista) {
     if(counter) counter.innerText = listaOrdenada.length;
 }
 
-// Filtros de búsqueda (Requisito de la rúbrica del Geoportal)
 function aplicarFiltros() {
     const genSelect = document.getElementById('filterGenero');
     const gen = genSelect ? genSelect.value : 'todos';
@@ -170,22 +174,12 @@ function aplicarFiltros() {
     renderizarUI(filtrados);
 }
 
-// Event Listeners seguros
 const btnFiltro = document.getElementById('btnAplicarFiltros');
 if(btnFiltro) btnFiltro.addEventListener('click', aplicarFiltros);
 
 const btnRefresh = document.getElementById('btnRefresh');
 if(btnRefresh) btnRefresh.addEventListener('click', cargarDatosEnVivo);
 
-const btnLimpiar = document.getElementById('btnLimpiarFiltros');
-if(btnLimpiar) {
-    btnLimpiar.addEventListener('click', () => {
-        const genSelect = document.getElementById('filterGenero');
-        if(genSelect) genSelect.value = 'todos';
-        renderizarUI(rawEmergenciasData);
-    });
-}
-
-// Ciclo de actualización en tiempo real cada 5 segundos
+// Carga inicial y bucle de sondeo cada 4 segundos
 cargarDatosEnVivo();
-setInterval(cargarDatosEnVivo, 5000);
+setInterval(cargarDatosEnVivo, 4000);
