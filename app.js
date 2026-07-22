@@ -15,6 +15,52 @@ const emergenciasLayerGroup = L.layerGroup().addTo(map);
 let rawEmergenciasData = [];
 let marcadoresGuardados = {};
 const cacheDirecciones = {};
+// ==========================================
+// 🌟 INNOVACIÓN GIS: INFRAESTRUCTURA ESTRATÉGICA RIOBAMBA
+// ==========================================
+const infraestructuraLayerGroup = L.layerGroup().addTo(map);
+
+// Coordenadas reales (aproximadas) de Riobamba
+const infraestructuraSICOA = [
+    { nombre: "UPC La Condamine", tipo: "policia", lat: -1.6685, lng: -78.6480, desc: "Patrullas Sector Centro" },
+    { nombre: "UPC Politécnica (UNACH)", tipo: "policia", lat: -1.6580, lng: -78.6750, desc: "Respuesta Inmediata Universitaria" },
+    { nombre: "UPC Terminal Terrestre", tipo: "policia", lat: -1.6500, lng: -78.6600, desc: "Control Norte" },
+    { nombre: "Hospital General Docente", tipo: "hospital", lat: -1.6540, lng: -78.6550, desc: "Emergencias Mayores (Trauma)" },
+    { nombre: "Hospital del IESS", tipo: "hospital", lat: -1.6750, lng: -78.6450, desc: "Atención General" }
+];
+
+// Dibujar las instalaciones en el mapa
+infraestructuraSICOA.forEach(instalacion => {
+    // Definimos el color y el ícono dependiendo si es Policía o Hospital
+    const isPolicia = instalacion.tipo === "policia";
+    const bgClass = isPolicia ? "bg-blue-600" : "bg-teal-500";
+    const iconClass = isPolicia ? "fa-shield-halved" : "fa-square-h";
+
+    const customIcon = L.divIcon({
+        className: 'infra-pin',
+        html: `<div class="${bgClass} w-7 h-7 rounded flex items-center justify-center text-white shadow-lg border border-white">
+                 <i class="fa-solid ${iconClass} text-xs"></i>
+               </div>`,
+        iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -25]
+    });
+
+    const marker = L.marker([instalacion.lat, instalacion.lng], { icon: customIcon });
+    
+    // El globo de información (Popup)
+    marker.bindPopup(`
+        <div class="text-xs p-1">
+            <span class="font-black text-slate-800 block mb-1 uppercase border-b pb-1">
+                ${isPolicia ? '🚓' : '🏥'} ${instalacion.nombre}
+            </span>
+            <span class="text-slate-500">${instalacion.desc}</span>
+            <div class="mt-2 text-[9px] text-indigo-500 font-bold bg-indigo-50 p-1 rounded text-center">
+                ACTIVO 24/7 - RADIO SICOA
+            </div>
+        </div>
+    `);
+    
+    infraestructuraLayerGroup.addLayer(marker);
+});
 
 // ==========================================
 // 2. FUNCIONES DE UTILIDAD
