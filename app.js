@@ -139,13 +139,38 @@ function renderizarUI(lista) {
 
         const fechaCruda = item.created_at || item.fecha_hora;
         const horaFormateada = fechaCruda ? new Date(fechaCruda).toLocaleTimeString() : 'Recién';
+        
+        // Color del Badge dependiendo si es médica o asalto
+        const esMedica = item.descripcion && item.descripcion.includes("Médica");
+        const colorBadge = esMedica ? "bg-green-100 text-green-700 border-green-300" : "bg-red-100 text-red-700 border-red-300";
 
+        // Diseñamos la fila interactiva
         tr.innerHTML = `
             <td class="p-3 text-red-600 font-black">#${item.id}</td>
             <td class="p-3"><span class="block font-bold text-slate-700">${horaFormateada}</span></td>
-            <td class="p-3"><span class="block font-bold text-slate-800">${escapeHTML(item.nombres || 'Anónimo')} ${escapeHTML(item.apellidos || '')}</span></td>
-            <td class="p-3"><span class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]">${escapeHTML(item.genero || 'N/D')}</span></td>
-            <td class="p-3 text-[11px] font-medium text-slate-600" id="dir-${item.id}"><i class="fa-solid fa-circle-notch fa-spin text-slate-300"></i> Localizando...</td>
+            
+            <td class="p-3">
+                <span class="block font-bold text-slate-800">${escapeHTML(item.nombres || 'Anónimo')} ${escapeHTML(item.apellidos || '')}</span>
+                <span class="text-[10px] text-slate-500 font-mono"><i class="fa-regular fa-id-card"></i> ${escapeHTML(item.cedula || 'Sin cédula')}</span>
+            </td>
+            
+            <td class="p-3 text-center">
+                <span class="px-2 py-1 border rounded text-[10px] font-bold uppercase ${colorBadge}">
+                    ${esMedica ? '<i class="fa-solid fa-truck-medical"></i>' : '<i class="fa-solid fa-person-rifle"></i>'} 
+                    ${escapeHTML(item.descripcion || 'Alerta')}
+                </span>
+            </td>
+            
+            <td class="p-3 text-center">
+                <span class="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[10px]">
+                    ${item.genero === 'Femenino' ? '<i class="fa-solid fa-venus text-pink-500"></i>' : '<i class="fa-solid fa-mars text-blue-500"></i>'} 
+                    ${escapeHTML(item.genero || 'N/D')}
+                </span>
+            </td>
+            
+            <td class="p-3 text-[11px] font-medium text-slate-600" id="dir-${item.id}">
+                <i class="fa-solid fa-circle-notch fa-spin text-slate-300"></i> Localizando...
+            </td>
         `;
         tbody.appendChild(tr);
     });
@@ -156,12 +181,22 @@ function renderizarUI(lista) {
 
 function aplicarFiltros() {
     const genSelect = document.getElementById('filterGenero');
+    const tipoSelect = document.getElementById('filterTipo');
+    
     const gen = genSelect ? genSelect.value : 'todos';
+    const tipo = tipoSelect ? tipoSelect.value : 'todos';
     
     const filtrados = rawEmergenciasData.filter(item => {
+        // Filtro por Género
         if (gen !== 'todos' && item.genero !== gen) return false;
+        
+        // Filtro por Tipo de Emergencia (Asalto o Médica)
+        // Usamos includes porque a veces se guarda como "Asalto o Robo" dependiendo del botón
+        if (tipo !== 'todos' && item.descripcion && !item.descripcion.includes(tipo)) return false;
+        
         return true;
     });
+    
     renderizarUI(filtrados);
 }
 
