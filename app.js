@@ -65,20 +65,16 @@ function dibujarInfraestructura() {
     });
 }
 
-// Control manual de capas desde los Checkboxes
 document.getElementById('toggleUPC')?.addEventListener('change', (e) => e.target.checked ? map.addLayer(upcLayerGroup) : map.removeLayer(upcLayerGroup));
 document.getElementById('toggleHospital')?.addEventListener('change', (e) => e.target.checked ? map.addLayer(hospitalLayerGroup) : map.removeLayer(hospitalLayerGroup));
 document.getElementById('toggleRutas')?.addEventListener('change', (e) => { if(!e.target.checked && lineaRutaActiva) map.removeLayer(lineaRutaActiva); });
 
-// Análisis de Proximidad (Nearest Neighbor Algorithm)
 function trazarRutaMasCercana(lat, lng, tipoEmergencia) {
     if (lineaRutaActiva) map.removeLayer(lineaRutaActiva); 
     if (!document.getElementById('toggleRutas')?.checked) return;
 
     let unidadMasCercana = null;
     let distanciaMinima = Infinity;
-    
-    // Si es asalto, busca UPC. Si es médica, busca Hospital.
     const tipoBuscado = (tipoEmergencia && tipoEmergencia.includes("Médica")) ? 'hospital' : 'policia';
 
     infraestructuraReal.filter(i => i.tipo === tipoBuscado).forEach(unidad => {
@@ -87,12 +83,10 @@ function trazarRutaMasCercana(lat, lng, tipoEmergencia) {
     });
 
     if (unidadMasCercana) {
-        const colorRuta = tipoBuscado === 'policia' ? '#3b82f6' : '#14b8a6'; // Azul o Verde Teal
+        const colorRuta = tipoBuscado === 'policia' ? '#3b82f6' : '#14b8a6'; 
         lineaRutaActiva = L.polyline([[lat, lng], [unidadMasCercana.lat, unidadMasCercana.lng]], {
             color: colorRuta, weight: 4, dashArray: '8, 8', opacity: 0.9
         }).addTo(map);
-        
-        // Animamos el mapa para que se vean ambos puntos (La emergencia y el UPC/Hospital)
         map.fitBounds(lineaRutaActiva.getBounds(), { padding: [50, 50], maxZoom: 16 });
     }
 }
@@ -105,33 +99,48 @@ function escapeHTML(str) { return str ? String(str).replace(/[&<>'"]/g, match =>
 async function obtenerCalleRiobambaConPausa(lat, lon, id, index) {
     if (!lat || !lon) return;
     const coords = `${parseFloat(lat).toFixed(3)},${parseFloat(lon).toFixed(3)}`;
-    if (cacheDirecciones[coords]) { document.getElementById(`dir-${id}`).innerHTML = `<i class="fa-solid fa-map-pin text-red-400 mr-1"></i> ${escapeHTML(cacheDirecciones[coords])}`; return; }
+    const celda = document.getElementById(`dir-${id}`);
+    if (!celda) return; // Evita el error de choque en el DOM
+
+    if (cacheDirecciones[coords]) { 
+        celda.innerHTML = `<i class="fa-solid fa-map-pin text-red-400 mr-1"></i> ${escapeHTML(cacheDirecciones[coords])}`; 
+        return; 
+    }
     setTimeout(async () => {
         try {
             const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18`);
             const data = await res.json();
             const dir = (data.display_name || "").split(',').slice(0, 2).join(', ') + ', Riobamba';
             cacheDirecciones[coords] = dir;
-            document.getElementById(`dir-${id}`).innerHTML = `<i class="fa-solid fa-map-pin text-red-400 mr-1"></i> ${escapeHTML(dir)}`;
+            if(document.getElementById(`dir-${id}`)) {
+                document.getElementById(`dir-${id}`).innerHTML = `<i class="fa-solid fa-map-pin text-red-400 mr-1"></i> ${escapeHTML(dir)}`;
+            }
         } catch (e) {}
     }, index * 300);
-}
-
-async function cargarDatosIniciales() {
-    try {
-        const response = await fetch(`${SUPABASE_URL}/rest/v1/alertas?select=*`, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-        if (!response.ok) throw new Error("Error API");
-        rawEmergenciasData = await response.json();
-        aplicarFiltros();
-        actualizarEstado(true);
-    } catch (e) { actualizarEstado(false); }
 }
 
 function actualizarEstado(ok) {
     const sb = document.getElementById('statusGeoServer');
     if(!sb) return;
-    sb.className = ok ? "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center shadow-inner" : "bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-full border border-red-500/30 flex items-center";
-    sb.innerHTML = ok ? '<i class="fa-solid fa-satellite-dish text-emerald-400 mr-2 animate-pulse"></i> WebSocket Realtime Activo' : '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
+    if (ok) {
+        sb.className = "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center shadow-inner";
+        sb.innerHTML = '<i class="fa-solid fa-satellite-dish text-emerald-400 mr-2 animate-pulse"></i> WebSocket Realtime Activo';
+    } else {
+        sb.className = "bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-full border border-red-500/30 flex items-center";
+        sb.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
+    }
+}
+
+async function cargarDatosIniciales() {
+    try {
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/alertas?select=*`, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+        if (!response.ok) throw new Error("Error API REST");
+        rawEmergenciasData = await response.json();
+        aplicarFiltros();
+    } catch (e) { 
+        console.error("Fallo al cargar base de datos", e);
+        actualizarEstado(false); 
+    }
 }
 
 function renderizarUI(lista) {
@@ -144,7 +153,8 @@ function renderizarUI(lista) {
     tbody.innerHTML = '';
 
     const listaOrd = [...lista].sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-    document.getElementById('counterEmergencias').innerText = listaOrd.length;
+    const counter = document.getElementById('counterEmergencias');
+    if(counter) counter.innerText = listaOrd.length;
 
     listaOrd.forEach((item, index) => {
         if (!item.latitud || !item.longitud) return;
@@ -161,7 +171,6 @@ function renderizarUI(lista) {
 
         const marker = L.marker([item.latitud, item.longitud], { icon: mIcon });
         
-        // Popup interactivo
         const bHTML = esAtendida 
             ? `<button onclick="eliminarAlerta(${item.id})" class="mt-3 w-full bg-slate-200 hover:bg-red-600 hover:text-white text-slate-700 py-2 rounded text-xs font-bold transition"><i class="fa-solid fa-trash"></i> Borrar Registro</button>`
             : `<div class="mt-3 flex gap-2">
@@ -177,7 +186,6 @@ function renderizarUI(lista) {
                 <div class="pt-2">
                     <p class="font-black text-slate-800 text-sm"><i class="fa-solid fa-user-astronaut text-indigo-500 mr-1"></i> ${escapeHTML(item.nombres)} ${escapeHTML(item.apellidos)}</p>
                     <p class="text-[10px] text-slate-500 font-mono mt-1 mb-2 border-b pb-2"><i class="fa-regular fa-id-card"></i> C.I: ${escapeHTML(item.cedula || 'N/D')}</p>
-                    
                     <div class="flex justify-between items-center bg-slate-50 p-2 rounded border border-slate-100">
                         <span class="text-[10px] font-black uppercase ${esMedica ? 'text-green-600' : 'text-red-600'}">${esMedica ? '🚑 Médica' : '🔫 Asalto'}</span>
                         <span class="text-[10px] font-bold text-slate-600"><i class="fa-solid fa-venus-mars"></i> ${escapeHTML(item.genero)}</span>
@@ -192,13 +200,8 @@ function renderizarUI(lista) {
         // Fila de la Tabla
         const tr = document.createElement('tr');
         tr.className = esAtendida ? "bg-green-50/40 hover:bg-green-100 transition cursor-pointer" : "hover:bg-indigo-50 transition cursor-pointer";
-        tr.onclick = () => {
-            marker.openPopup();
-            trazarRutaMasCercana(item.latitud, item.longitud, item.descripcion);
-        };
+        tr.onclick = () => { marker.openPopup(); trazarRutaMasCercana(item.latitud, item.longitud, item.descripcion); };
         
-        obtenerCalleRiobambaConPausa(item.latitud, item.longitud, item.id, index);
-
         tr.innerHTML = `
             <td class="p-3">
                 <span class="${esAtendida ? 'text-green-600' : 'text-red-600'} font-black text-sm block">#${item.id}</span>
@@ -219,9 +222,14 @@ function renderizarUI(lista) {
                     ${item.genero === 'Femenino' ? '<i class="fa-solid fa-venus text-pink-500"></i>' : '<i class="fa-solid fa-mars text-blue-500"></i>'} ${escapeHTML(item.genero)}
                 </span>
             </td>
-            <td class="p-3 text-[11px] font-medium text-slate-600" id="dir-${item.id}"><i class="fa-solid fa-circle-notch fa-spin text-slate-300"></i> Localizando...</td>
+            <td class="p-3 text-[11px] font-medium text-slate-600" id="dir-${item.id}">
+                <i class="fa-solid fa-circle-notch fa-spin text-slate-300"></i> Buscando...
+            </td>
         `;
+        
+        // CORRECCIÓN CRÍTICA: Primero agregar al HTML, LUEGO buscar la dirección
         tbody.appendChild(tr);
+        obtenerCalleRiobambaConPausa(item.latitud, item.longitud, item.id, index);
     });
 }
 
@@ -262,14 +270,25 @@ window.eliminarAlerta = async function(id) {
 };
 
 // ==========================================
-// 5. WEBSOCKET REALTIME
+// 5. WEBSOCKET REALTIME (AUTO-RECONECTABLE)
 // ==========================================
+let socket;
 function initWebSocket() {
-    const socket = new WebSocket(`wss://phsaujoiuayfzwydxygo.supabase.co/realtime/v1/websocket?apikey=${SUPABASE_KEY}&vsn=1.0.0`);
+    socket = new WebSocket(`wss://phsaujoiuayfzwydxygo.supabase.co/realtime/v1/websocket?apikey=${SUPABASE_KEY}&vsn=1.0.0`);
+    
     socket.onopen = () => {
+        console.log("🟢 WebSocket SICOA: Conectado a la Nube.");
+        actualizarEstado(true); // Encender el botón verde
         socket.send(JSON.stringify({ "topic": "realtime:public:alertas", "event": "phx_join", "payload": { "config": { "postgres_changes": [{ "event": "INSERT", "schema": "public", "table": "alertas" }] } }, "ref": "1" }));
-        setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ "topic": "phoenix", "event": "heartbeat", "payload": {}, "ref": "hb" })); }, 30000);
+        
+        // Latido del corazón para que la conexión nunca se duerma
+        setInterval(() => { 
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ "topic": "phoenix", "event": "heartbeat", "payload": {}, "ref": "hb" })); 
+            }
+        }, 30000);
     };
+
     socket.onmessage = (e) => {
         try {
             const data = JSON.parse(e.data);
@@ -277,14 +296,29 @@ function initWebSocket() {
                 const nueva = data.payload.data.record;
                 rawEmergenciasData.unshift(nueva);
                 aplicarFiltros();
+                
+                // Enfocar automáticamente el mapa
                 if (nueva.latitud) {
-                    marcadoresGuardados[nueva.id]?.openPopup();
-                    trazarRutaMasCercana(nueva.latitud, nueva.longitud, nueva.descripcion);
+                    map.flyTo([nueva.latitud, nueva.longitud], 16, { animate: true, duration: 1.5 });
+                    setTimeout(() => {
+                        marcadoresGuardados[nueva.id]?.openPopup();
+                        trazarRutaMasCercana(nueva.latitud, nueva.longitud, nueva.descripcion);
+                    }, 1500);
                 }
             }
         } catch (err) {}
     };
-    socket.onerror = () => cargarDatosIniciales();
+
+    socket.onclose = () => {
+        console.warn("🔴 WebSocket Desconectado. Reconectando en 3 segundos...");
+        actualizarEstado(false);
+        setTimeout(initWebSocket, 3000); // Motor de auto-reconexión
+    };
+
+    socket.onerror = (err) => {
+        console.error("🔴 Error en WebSocket, intentando recuperar sistema...");
+        actualizarEstado(false);
+    };
 }
 
 // INICIALIZAR SISTEMA
