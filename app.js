@@ -1,5 +1,5 @@
 // ==========================================
-// 1. CONFIGURACIÓN DEL MAPA (Leaflet en Riobamba)
+// 1. CONFIGURACIÓN DEL MAPA Y CREDENCIALES
 // ==========================================
 const RIOBAMBA_CENTER = [-1.665, -78.654];
 const map = L.map('map').setView(RIOBAMBA_CENTER, 14);
@@ -8,9 +8,6 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
     attribution: '© OpenStreetMap, © CartoDB'
 }).addTo(map);
 
-// ==========================================
-// 🔑 CREDENCIALES DE SUPABASE
-// ==========================================
 const SUPABASE_URL = 'https://phsaujoiuayfzwydxygo.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoc2F1am9pdWF5Znp3eWR4eWdvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2MzU4NjIsImV4cCI6MjEwMDIxMTg2Mn0.drMcjGEiZmVFGYgpPz1u2PN0M1bu_8PXRpD1rGBr7Gg';
 
@@ -19,34 +16,24 @@ let rawEmergenciasData = [];
 let marcadoresGuardados = {};
 const cacheDirecciones = {};
 
-function escapeHTML(str) { 
-    return str ? String(str).replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]) : ''; 
-}
-
-function calcularEdad(fechaNacStr) { 
-    if (!fechaNacStr) return '-'; 
-    const nac = new Date(fechaNacStr); 
-    const edad = Math.abs(new Date(Date.now() - nac.getTime()).getUTCFullYear() - 1970);
-    return isNaN(edad) ? '-' : edad;
-}
+// ==========================================
+// 2. FUNCIONES DE UTILIDAD
+// ==========================================
+function escapeHTML(str) { return str ? String(str).replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[match]) : ''; }
+function calcularEdad(fecha) { if(!fecha) return '-'; const ed = Math.abs(new Date(Date.now() - new Date(fecha).getTime()).getUTCFullYear() - 1970); return isNaN(ed) ? '-' : ed; }
 
 async function obtenerCalleRiobambaConPausa(lat, lon, id, index) {
     if (!lat || !lon) return;
     const coords = `${parseFloat(lat).toFixed(3)},${parseFloat(lon).toFixed(3)}`;
-    if (cacheDirecciones[coords]) { 
-        actualizarCeldaDireccion(id, cacheDirecciones[coords]); 
-        return; 
-    }
+    if (cacheDirecciones[coords]) { actualizarCeldaDireccion(id, cacheDirecciones[coords]); return; }
     setTimeout(async () => {
         try {
             const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18`);
             const data = await res.json();
-            let direccion = (data.display_name || "").split(',').slice(0, 2).join(', ') + ', Riobamba';
-            cacheDirecciones[coords] = direccion;
-            actualizarCeldaDireccion(id, direccion);
-        } catch (e) { 
-            actualizarCeldaDireccion(id, "Riobamba (GPS Urbano)"); 
-        }
+            const dir = (data.display_name || "").split(',').slice(0, 2).join(', ') + ', Riobamba';
+            cacheDirecciones[coords] = dir;
+            actualizarCeldaDireccion(id, dir);
+        } catch (e) { actualizarCeldaDireccion(id, "Riobamba (GPS Urbano)"); }
     }, index * 300);
 }
 
@@ -56,34 +43,27 @@ function actualizarCeldaDireccion(id, dir) {
 }
 
 // ==========================================
-// 📡 CARGA INICIAL DE DATOS
+// 3. CARGA DE DATOS Y RENDERIZADO
 // ==========================================
 async function cargarDatosIniciales() {
     try {
         const response = await fetch(`${SUPABASE_URL}/rest/v1/alertas?select=*`, {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
         });
-        if (!response.ok) throw new Error("Error de conexión");
-        
+        if (!response.ok) throw new Error("Error");
         rawEmergenciasData = await response.json();
         aplicarFiltros();
         actualizarEstadoConexion(true);
-    } catch (e) {
-        actualizarEstadoConexion(false);
-    }
+    } catch (e) { actualizarEstadoConexion(false); }
 }
 
 function actualizarEstadoConexion(conectado) {
-    const statusBadge = document.getElementById('statusGeoServer');
-    if(statusBadge) {
-        if (conectado) {
-            // 👇 AQUÍ ESTÁ LA ETIQUETA DEL WEBSOCKET
-            statusBadge.className = "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center shadow-inner";
-            statusBadge.innerHTML = '<i class="fa-solid fa-satellite-dish text-emerald-400 mr-2 animate-pulse"></i> WebSocket Realtime Activo';
-        } else {
-            statusBadge.className = "bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-full border border-red-500/30 flex items-center";
-            statusBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
-        }
+    const sb = document.getElementById('statusGeoServer');
+    if(sb) {
+        sb.className = conectado ? "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center shadow-inner" 
+                                 : "bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-full border border-red-500/30 flex items-center";
+        sb.innerHTML = conectado ? '<i class="fa-solid fa-satellite-dish text-emerald-400 mr-2 animate-pulse"></i> WebSocket Realtime Activo' 
+                                 : '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
     }
 }
 
@@ -99,75 +79,80 @@ function renderizarUI(lista) {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    const listaOrdenada = [...lista].sort((a,b) => {
-        const fechaA = new Date(a.created_at || a.fecha_hora || 0);
-        const fechaB = new Date(b.created_at || b.fecha_hora || 0);
-        return fechaB - fechaA;
-    });
+    const listaOrdenada = [...lista].sort((a,b) => new Date(b.created_at || b.fecha_hora || 0) - new Date(a.created_at || a.fecha_hora || 0));
 
     listaOrdenada.forEach((item, index) => {
         if (!item.latitud || !item.longitud) return;
 
         const edad = calcularEdad(item.fecha_nacimiento);
+        const esAtendida = item.estado === 'Atendida'; // Logica de colores
         
+        // DISEÑO DEL MARCADOR (Verde si está atendida, Rojo rebotando si es nueva)
+        const pinClass = esAtendida ? "bg-green-600" : "animate-bounce bg-red-600";
         const iconAlert = L.divIcon({
             className: 'custom-alert-pin',
-            html: `<div class="animate-bounce bg-red-600 w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white text-[10px] shadow-lg"><i class="fa-solid fa-bell"></i></div>`,
+            html: `<div class="${pinClass} w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-white text-[10px] shadow-lg"><i class="fa-solid ${esAtendida ? 'fa-check' : 'fa-bell'}"></i></div>`,
             iconSize: [24, 24], iconAnchor: [12, 24], popupAnchor: [0, -20]
         });
 
         const marker = L.marker([item.latitud, item.longitud], { icon: iconAlert });
+        
+        // BOTONES DE INTERACCIÓN DEL POPUP
+        const controlesHTML = esAtendida 
+            ? `<div class="mt-3"><button onclick="eliminarAlerta(${item.id})" class="w-full bg-slate-500 hover:bg-red-600 text-white py-1.5 rounded text-[10px] font-bold transition shadow"><i class="fa-solid fa-trash"></i> Borrar Registro</button></div>`
+            : `<div class="mt-3 flex gap-2">
+                 <button onclick="marcarAtendida(${item.id})" class="flex-1 bg-green-500 hover:bg-green-600 text-white py-1.5 rounded text-[10px] font-bold transition shadow"><i class="fa-solid fa-check-circle"></i> Atender</button>
+                 <button onclick="eliminarAlerta(${item.id})" class="flex-1 bg-slate-500 hover:bg-red-600 text-white py-1.5 rounded text-[10px] font-bold transition shadow"><i class="fa-solid fa-trash"></i> Eliminar</button>
+               </div>`;
+
         const popupHTML = `
-            <div class="font-sans text-xs">
-                <div class="bg-red-600 text-white font-bold p-2 -m-3 mb-2 rounded-t-lg">🚨 ALERTA REALTIME #${item.id}</div>
-                <p class="mt-2 text-sm font-bold text-slate-800">${escapeHTML(item.nombres || 'Ciudadano')} ${escapeHTML(item.apellidos || '')}</p>
-                <p class="text-xs text-red-600 font-bold mt-1">Tipo: ${escapeHTML(item.descripcion || 'Emergencia')}</p>
-                <div class="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded mt-2">
-                    <div><span class="text-slate-400 block text-[9px] uppercase">Género</span> <span class="font-semibold">${escapeHTML(item.genero || '-')}</span></div>
-                    <div><span class="text-slate-400 block text-[9px] uppercase">Edad</span> <span class="font-semibold text-indigo-600">${edad} años</span></div>
+            <div class="font-sans text-xs w-48">
+                <div class="${esAtendida ? 'bg-green-600' : 'bg-red-600'} text-white font-bold p-2 -m-3 mb-2 rounded-t-lg text-center">
+                    ${esAtendida ? '✅ ALERTA ATENDIDA' : '🚨 ALERTA REALTIME'}
                 </div>
+                <p class="mt-3 text-sm font-bold text-slate-800"><i class="fa-regular fa-id-card"></i> ${escapeHTML(item.cedula || 'N/D')}</p>
+                <p class="text-xs text-slate-600">${escapeHTML(item.nombres)} ${escapeHTML(item.apellidos)}</p>
+                <p class="text-[10px] font-bold mt-1 ${item.descripcion?.includes("Médica") ? 'text-green-600' : 'text-red-600'}">
+                    Tipo: ${escapeHTML(item.descripcion || 'Emergencia')}
+                </p>
+                ${controlesHTML}
             </div>`;
+        
         marker.bindPopup(popupHTML);
         emergenciasLayerGroup.addLayer(marker);
         marcadoresGuardados[item.id] = marker;
 
+        // FILA DE LA TABLA (Cambia de color si está atendida)
         const tr = document.createElement('tr');
-        tr.className = "hover:bg-indigo-50 transition cursor-pointer group";
+        tr.className = esAtendida ? "bg-green-50/50 hover:bg-green-100 transition cursor-pointer group" : "hover:bg-indigo-50 transition cursor-pointer group";
         tr.onclick = () => enfocarAlerta(item.id, item.latitud, item.longitud);
         
         obtenerCalleRiobambaConPausa(item.latitud, item.longitud, item.id, index);
 
         const fechaCruda = item.created_at || item.fecha_hora;
         const horaFormateada = fechaCruda ? new Date(fechaCruda).toLocaleTimeString() : 'Recién';
-        
-        // Color del Badge dependiendo si es médica o asalto
         const esMedica = item.descripcion && item.descripcion.includes("Médica");
         const colorBadge = esMedica ? "bg-green-100 text-green-700 border-green-300" : "bg-red-100 text-red-700 border-red-300";
 
-        // Diseñamos la fila interactiva
         tr.innerHTML = `
-            <td class="p-3 text-red-600 font-black">#${item.id}</td>
+            <td class="p-3 ${esAtendida ? 'text-green-600' : 'text-red-600'} font-black">#${item.id}</td>
             <td class="p-3"><span class="block font-bold text-slate-700">${horaFormateada}</span></td>
-            
             <td class="p-3">
                 <span class="block font-bold text-slate-800">${escapeHTML(item.nombres || 'Anónimo')} ${escapeHTML(item.apellidos || '')}</span>
                 <span class="text-[10px] text-slate-500 font-mono"><i class="fa-regular fa-id-card"></i> ${escapeHTML(item.cedula || 'Sin cédula')}</span>
             </td>
-            
             <td class="p-3 text-center">
                 <span class="px-2 py-1 border rounded text-[10px] font-bold uppercase ${colorBadge}">
                     ${esMedica ? '<i class="fa-solid fa-truck-medical"></i>' : '<i class="fa-solid fa-person-rifle"></i>'} 
                     ${escapeHTML(item.descripcion || 'Alerta')}
                 </span>
             </td>
-            
             <td class="p-3 text-center">
                 <span class="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[10px]">
                     ${item.genero === 'Femenino' ? '<i class="fa-solid fa-venus text-pink-500"></i>' : '<i class="fa-solid fa-mars text-blue-500"></i>'} 
                     ${escapeHTML(item.genero || 'N/D')}
                 </span>
             </td>
-            
             <td class="p-3 text-[11px] font-medium text-slate-600" id="dir-${item.id}">
                 <i class="fa-solid fa-circle-notch fa-spin text-slate-300"></i> Localizando...
             </td>
@@ -179,87 +164,95 @@ function renderizarUI(lista) {
     if(counter) counter.innerText = listaOrdenada.length;
 }
 
+// ==========================================
+// 4. FUNCIONES DE FILTRADO Y GESTIÓN (SICOA)
+// ==========================================
 function aplicarFiltros() {
-    const genSelect = document.getElementById('filterGenero');
-    const tipoSelect = document.getElementById('filterTipo');
-    
-    const gen = genSelect ? genSelect.value : 'todos';
-    const tipo = tipoSelect ? tipoSelect.value : 'todos';
+    const cedula = document.getElementById('filterCedula')?.value.trim() || '';
+    const tipo = document.getElementById('filterTipo')?.value || 'todos';
+    const gen = document.getElementById('filterGenero')?.value || 'todos';
     
     const filtrados = rawEmergenciasData.filter(item => {
-        // Filtro por Género
+        if (cedula !== '' && item.cedula !== cedula) return false;
         if (gen !== 'todos' && item.genero !== gen) return false;
-        
-        // Filtro por Tipo de Emergencia (Asalto o Médica)
-        // Usamos includes porque a veces se guarda como "Asalto o Robo" dependiendo del botón
         if (tipo !== 'todos' && item.descripcion && !item.descripcion.includes(tipo)) return false;
-        
         return true;
     });
-    
     renderizarUI(filtrados);
 }
 
+function limpiarFiltros() {
+    if(document.getElementById('filterCedula')) document.getElementById('filterCedula').value = '';
+    if(document.getElementById('filterTipo')) document.getElementById('filterTipo').value = 'todos';
+    if(document.getElementById('filterGenero')) document.getElementById('filterGenero').value = 'todos';
+    aplicarFiltros();
+}
+
+// 🔥 ACTUALIZAR ESTADO EN SUPABASE (Marcar Atendida)
+window.marcarAtendida = async function(id) {
+    const idx = rawEmergenciasData.findIndex(e => e.id === id);
+    if(idx !== -1) {
+        rawEmergenciasData[idx].estado = 'Atendida'; // Cambia en la UI de inmediato
+        aplicarFiltros(); 
+        map.closePopup();
+    }
+    // Llama a la API para guardarlo en la nube
+    try {
+        await fetch(`${SUPABASE_URL}/rest/v1/alertas?id=eq.${id}`, {
+            method: 'PATCH',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ estado: 'Atendida' })
+        });
+    } catch(e) { console.warn("No se pudo actualizar en Supabase, asegúrate de haber creado la columna 'estado'"); }
+};
+
+// 🔥 ELIMINAR REGISTRO DE SUPABASE
+window.eliminarAlerta = async function(id) {
+    if(!confirm("⚠️ ¿Estás seguro de que deseas eliminar esta alerta del sistema?")) return;
+    
+    rawEmergenciasData = rawEmergenciasData.filter(e => e.id !== id);
+    aplicarFiltros();
+    
+    try {
+        await fetch(`${SUPABASE_URL}/rest/v1/alertas?id=eq.${id}`, {
+            method: 'DELETE',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+    } catch(e) { console.error("Error al borrar", e); }
+};
+
 // ==========================================
-// ⚡ CONEXIÓN WEBSOCKET REAL (SUPABASE REALTIME)
+// 5. CONEXIÓN WEBSOCKET REALTIME
 // ==========================================
 function inicializarWebSocketRealtime() {
-    const wsUrl = `wss://phsaujoiuayfzwydxygo.supabase.co/realtime/v1/websocket?apikey=${SUPABASE_KEY}&vsn=1.0.0`;
-    const socket = new WebSocket(wsUrl);
-
+    const socket = new WebSocket(`wss://phsaujoiuayfzwydxygo.supabase.co/realtime/v1/websocket?apikey=${SUPABASE_KEY}&vsn=1.0.0`);
     socket.onopen = () => {
-        console.log("WebSocket conectado con Supabase");
-        const joinPayload = {
-            "topic": "realtime:public:alertas",
-            "event": "phx_join",
-            "payload": {
-                "config": {
-                    "postgres_changes": [{ "event": "INSERT", "schema": "public", "table": "alertas" }]
-                }
-            },
+        socket.send(JSON.stringify({
+            "topic": "realtime:public:alertas", "event": "phx_join",
+            "payload": { "config": { "postgres_changes": [{ "event": "INSERT", "schema": "public", "table": "alertas" }] } },
             "ref": "1"
-        };
-        socket.send(JSON.stringify(joinPayload));
-        
-        setInterval(() => {
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ "topic": "phoenix", "event": "heartbeat", "payload": {}, "ref": "hb" }));
-            }
-        }, 30000);
+        }));
+        setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ "topic": "phoenix", "event": "heartbeat", "payload": {}, "ref": "hb" })); }, 30000);
     };
-
     socket.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
             if (data.event === "postgres_changes" && data.payload && data.payload.data) {
-                const nuevaAlerta = data.payload.data.record;
-                console.log("¡Nueva alerta en tiempo real por WebSocket!", nuevaAlerta);
-                
-                rawEmergenciasData.unshift(nuevaAlerta);
+                const nueva = data.payload.data.record;
+                rawEmergenciasData.unshift(nueva);
                 aplicarFiltros();
-                
-                if (nuevaAlerta.latitud && nuevaAlerta.longitud) {
-                    enfocarAlerta(nuevaAlerta.id, nuevaAlerta.latitud, nuevaAlerta.longitud);
-                }
+                if (nueva.latitud) enfocarAlerta(nueva.id, nueva.latitud, nueva.longitud);
             }
-        } catch (err) {
-            console.error("Error procesando mensaje WebSocket:", err);
-        }
+        } catch (err) {}
     };
-
-    socket.onerror = () => {
-        console.warn("WebSocket desconectado. Intentando modo clásico...");
-        cargarDatosIniciales();
-    };
+    socket.onerror = () => cargarDatosIniciales();
 }
 
-// Listeners
-const btnFiltro = document.getElementById('btnAplicarFiltros');
-if(btnFiltro) btnFiltro.addEventListener('click', aplicarFiltros);
+// ASIGNACIÓN DE EVENTOS
+document.getElementById('btnAplicarFiltros')?.addEventListener('click', aplicarFiltros);
+document.getElementById('btnLimpiarFiltros')?.addEventListener('click', limpiarFiltros);
+document.getElementById('btnRefresh')?.addEventListener('click', cargarDatosIniciales);
 
-const btnRefresh = document.getElementById('btnRefresh');
-if(btnRefresh) btnRefresh.addEventListener('click', cargarDatosIniciales);
-
-// Arrancar sistema
+// ARRANQUE SICOA
 cargarDatosIniciales();
-inicializarWebSocketRealtime(); // 🚀 ¡Canal WebSocket real activo!
+inicializarWebSocketRealtime();
