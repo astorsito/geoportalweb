@@ -8,20 +8,22 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
     attribution: '© OpenStreetMap, © CartoDB'
 }).addTo(map);
 
-// 🔥 Inicializar Cliente Oficial de Supabase
+// Inicializar Cliente Oficial de Supabase con 'supabaseClient' para evitar conflictos
 const SUPABASE_URL = 'https://phsaujoiuayfzwydxygo.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoc2F1am9pdWF5Znp3eWR4eWdvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2MzU4NjIsImV4cCI6MjEwMDIxMTg2Mn0.drMcjGEiZmVFGYgpPz1u2PN0M1bu_8PXRpD1rGBr7Gg';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Capas Especializadas SICOA
 const emergenciasLayerGroup = L.layerGroup().addTo(map);
 const upcLayerGroup = L.layerGroup().addTo(map);
 const hospitalLayerGroup = L.layerGroup().addTo(map);
+
+// Mapa de Calor (minOpacity para ver las calles debajo)
 let heatLayer = L.heatLayer([], { 
     radius: 25, 
     blur: 15, 
     maxZoom: 15, 
-    minOpacity: 0.5, // 🔥 Esto hace que las calles se vean debajo del calor
+    minOpacity: 0.5, 
     gradient: {0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red'} 
 });
 let lineaRutaActiva = null; 
@@ -67,7 +69,6 @@ document.getElementById('toggleRutas')?.addEventListener('change', (e) => { if(!
 
 document.getElementById('toggleHeatmap')?.addEventListener('change', (e) => {
     if (e.target.checked) {
-        // Solo añadimos la mancha de calor, YA NO borramos los puntos
         map.addLayer(heatLayer); 
     } else {
         map.removeLayer(heatLayer);
@@ -122,27 +123,25 @@ function actualizarEstado(ok) {
     const sb = document.getElementById('statusGeoServer');
     if(!sb) return;
     sb.className = ok ? "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center shadow-inner" : "bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-full border border-red-500/30 flex items-center";
-    sb.innerHTML = ok ? '<i class="fa-solid fa-bolt text-emerald-400 mr-2 animate-pulse"></i> WebSocket Activo (Supabase JS)' : '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
+    sb.innerHTML = ok ? '<i class="fa-solid fa-bolt text-emerald-400 mr-2 animate-pulse"></i> WebSocket Activo' : '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
 }
 
-// Capturamos la cédula si viene desde la app móvil
 const urlParams = new URLSearchParams(window.location.search);
 const cedulaUsuarioMovil = urlParams.get('cedula');
 
 async function cargarDatosIniciales() {
     try {
-        // Armamos la consulta base
-        let query = supabase.from('alertas').select('*').order('created_at', { ascending: false });
+        let query = supabaseClient.from('alertas').select('*');
         
-        // Si hay una cédula en la URL (alguien abrió desde la app), filtramos la base de datos
         if (cedulaUsuarioMovil && cedulaUsuarioMovil !== '') {
             query = query.eq('cedula', cedulaUsuarioMovil);
         }
 
         const { data, error } = await query;
         if (error) throw error;
-        rawEmergenciasData = data;
+        rawEmergenciasData = data || [];
         aplicarFiltros();
+        actualizarEstado(true);
     } catch (e) { 
         actualizarEstado(false); 
         console.error("Error al cargar datos:", e); 
@@ -154,14 +153,14 @@ function renderizarUI(lista) {
     marcadoresGuardados = {};
     if (lineaRutaActiva) map.removeLayer(lineaRutaActiva); 
     
-    const puntosCalor = lista.filter(i => i.latitud && i.estado !== 'Atendida').map(i => [i.latitud, i.longitud, 1]);
+    const puntosCalor = lista.filter(i => i.latitud && i.estado !== 'Atendida').map(i => [parseFloat(i.latitud), parseFloat(i.longitud), 1]);
     heatLayer.setLatLngs(puntosCalor);
 
     const tbody = document.getElementById('tablaEmergenciasBody');
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    const listaOrd = [...lista].sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    const listaOrd = [...lista].sort((a,b) => (b.id || 0) - (a.id || 0));
     if(document.getElementById('counterEmergencias')) document.getElementById('counterEmergencias').innerText = listaOrd.length;
 
     listaOrd.forEach((item, index) => {
@@ -178,26 +177,20 @@ function renderizarUI(lista) {
 
         const marker = L.marker([item.latitud, item.longitud], { icon: mIcon });
         
-       // 🔥 Si la app móvil lo está abriendo, mostramos estado limpio. Si es el ECU 911, mostramos botones de control.
-const bHTML = cedulaUsuarioMovil 
-    ? `<div class="mt-2 p-2 bg-red-50 rounded border border-red-200 text-center">
-         <p class="text-xs font-black text-red-700">🚨 EMERGENCIA ACTIVA</p>
-         <p class="text-[10px] text-slate-600 mt-1">Unidad y ruta segura en camino</p>
-       </div>`
-    : (esAtendida 
-        ? `<button onclick="eliminarAlerta(${item.id})" class="mt-3 w-full bg-slate-200 hover:bg-red-600 text-slate-700 py-1.5 rounded text-xs font-bold transition">Borrar</button>`
-        : `<div class="mt-3 flex gap-2">
-             <button onclick="marcarAtendida(${item.id})" class="flex-1 bg-green-500 text-white py-1.5 rounded text-[11px] font-bold">Atender</button>
-             <button onclick="eliminarAlerta(${item.id})" class="flex-1 bg-slate-300 text-slate-700 hover:bg-red-600 py-1.5 rounded text-[11px] font-bold">Eliminar</button>
-           </div>`);
-        marker.bindPopup(`<div class="w-48 text-center p-1"><div class="${esAtendida ? 'text-green-600' : 'text-red-600'} font-black text-sm mb-1">${esAtendida ? '✅ ATENDIDA' : '🚨 ALERTA'}</div><p class="font-bold text-xs">${escapeHTML(item.nombres)}</p><p class="text-[10px] text-slate-500">${item.descripcion}</p>${bHTML}</div>`);
+        const bHTML = esAtendida 
+            ? `<button onclick="eliminarAlerta(${item.id})" class="mt-3 w-full bg-slate-200 hover:bg-red-600 text-slate-700 py-1.5 rounded text-xs font-bold transition">Borrar</button>`
+            : `<div class="mt-3 flex gap-2">
+                 <button onclick="marcarAtendida(${item.id})" class="flex-1 bg-green-500 text-white py-1.5 rounded text-[11px] font-bold">Atender</button>
+                 <button onclick="eliminarAlerta(${item.id})" class="flex-1 bg-slate-300 text-slate-700 hover:bg-red-600 py-1.5 rounded text-[11px] font-bold">Eliminar</button>
+               </div>`;
+
+        marker.bindPopup(`<div class="w-48 text-center p-1"><div class="${esAtendida ? 'text-green-600' : 'text-red-600'} font-black text-sm mb-1">${esAtendida ? '✅ ATENDIDA' : '🚨 ALERTA'}</div><p class="font-bold text-xs">${escapeHTML(item.nombres)}</p><p class="text-[10px] text-slate-500">${escapeHTML(item.descripcion)}</p>${bHTML}</div>`);
         emergenciasLayerGroup.addLayer(marker);
         marcadoresGuardados[item.id] = marker;
 
         const tr = document.createElement('tr');
         tr.className = esAtendida ? "bg-green-50/40 hover:bg-green-100 transition cursor-pointer" : "hover:bg-indigo-50 transition cursor-pointer";
         tr.onclick = () => { 
-            if(document.getElementById('toggleHeatmap')?.checked) document.getElementById('toggleHeatmap').click();
             marker.openPopup(); 
             trazarRutaMasCercana(item.latitud, item.longitud, item.descripcion); 
         };
@@ -207,7 +200,7 @@ const bHTML = cedulaUsuarioMovil
                 <span class="${esAtendida ? 'text-green-600' : 'text-red-600'} font-black text-sm block">#${item.id}</span>
                 <span class="text-[9px] font-bold px-1.5 py-0.5 rounded ${esAtendida ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}">${esAtendida ? 'ATENDIDA' : 'ACTIVA'}</span>
             </td>
-            <td class="p-3 font-bold text-slate-700 text-xs">${item.created_at ? new Date(item.created_at).toLocaleTimeString() : 'Recién'}</td>
+            <td class="p-3 font-bold text-slate-700 text-xs">Reciente</td>
             <td class="p-3"><span class="block font-bold text-slate-800 text-xs">${escapeHTML(item.nombres)} ${escapeHTML(item.apellidos)}</span><span class="text-[10px] text-slate-500"><i class="fa-regular fa-id-card"></i> ${escapeHTML(item.cedula)}</span></td>
             <td class="p-3 text-center"><span class="px-2 py-1 border rounded text-[10px] font-bold uppercase ${esMedica ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${escapeHTML(item.descripcion)}</span></td>
             <td class="p-3 text-center text-[10px] font-bold text-slate-600">${escapeHTML(item.genero)}</td>
@@ -216,20 +209,6 @@ const bHTML = cedulaUsuarioMovil
         tbody.appendChild(tr);
         obtenerCalleRiobambaConPausa(item.latitud, item.longitud, item.id, index);
     });
-    // 🔥 AUTO-TRAZADO MÓVIL: Si es el ciudadano en su cel, trazamos la ruta al punto seguro automáticamente
-    if (cedulaUsuarioMovil && lista.length > 0) {
-        const alertaCiudadano = lista[0];
-        if (alertaCiudadano.latitud && alertaCiudadano.longitud) {
-            setTimeout(() => {
-                map.setView([alertaCiudadano.latitud, alertaCiudadano.longitud], 16, { animate: true });
-                if (marcadoresGuardados[alertaCiudadano.id]) {
-                    marcadoresGuardados[alertaCiudadano.id].openPopup();
-                }
-                // Dibuja la línea de ruta hacia la UPC o el Hospital base
-                trazarRutaMasCercana(alertaCiudadano.latitud, alertaCiudadano.longitud, alertaCiudadano.descripcion);
-            }, 600);
-        }
-    }
 }
 
 function aplicarFiltros() {
@@ -249,41 +228,36 @@ document.getElementById('btnLimpiarFiltros')?.addEventListener('click', () => {
 });
 document.getElementById('btnRefresh')?.addEventListener('click', cargarDatosIniciales);
 
-// 🔥 Update Optimizado con SDK
 window.marcarAtendida = async function(id) {
     const idx = rawEmergenciasData.findIndex(e => e.id === id);
     if(idx !== -1) { rawEmergenciasData[idx].estado = 'Atendida'; aplicarFiltros(); map.closePopup(); }
-    await supabase.from('alertas').update({ estado: 'Atendida' }).eq('id', id);
+    await supabaseClient.from('alertas').update({ estado: 'Atendida' }).eq('id', id);
 };
 
-// 🔥 Delete Optimizado con SDK
 window.eliminarAlerta = async function(id) {
     if(!confirm("¿Eliminar registro?")) return;
     rawEmergenciasData = rawEmergenciasData.filter(e => e.id !== id); aplicarFiltros();
-    await supabase.from('alertas').delete().eq('id', id);
+    await supabaseClient.from('alertas').delete().eq('id', id);
 };
 
 // ==========================================
 // 4. WEBSOCKET REALTIME OFICIAL (SDK)
 // ==========================================
 function initWebSocket() {
-    // Nos suscribimos al canal de la tabla 'alertas'
-    supabase
+    supabaseClient
         .channel('schema-db-changes')
         .on(
             'postgres_changes',
             { event: 'INSERT', schema: 'public', table: 'alertas' },
             (payload) => {
-                console.log("¡Alerta recibida vía WebSocket!", payload);
                 const nueva = payload.new;
-                // Dentro de initWebSocket(), donde dice: const nueva = payload.new;
-// Añade esta línea justo debajo:
-if (cedulaUsuarioMovil && nueva.cedula !== cedulaUsuarioMovil) return;
+                
+                if (cedulaUsuarioMovil && nueva.cedula !== cedulaUsuarioMovil) return; 
+
                 rawEmergenciasData.unshift(nueva);
                 aplicarFiltros();
                 
-                // Animación y zoom al nuevo punto de forma automática
-                if (nueva.latitud && !document.getElementById('toggleHeatmap')?.checked) {
+                if (nueva.latitud) {
                     map.flyTo([nueva.latitud, nueva.longitud], 16, { animate: true, duration: 1.5 });
                     setTimeout(() => { 
                         marcadoresGuardados[nueva.id]?.openPopup(); 
@@ -294,9 +268,9 @@ if (cedulaUsuarioMovil && nueva.cedula !== cedulaUsuarioMovil) return;
         )
         .subscribe((status) => {
             if (status === 'SUBSCRIBED') {
-                actualizarEstado(true); // Conectado con éxito
+                actualizarEstado(true); 
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                actualizarEstado(false); // Se cayó el internet
+                actualizarEstado(false); 
             }
         });
 }
