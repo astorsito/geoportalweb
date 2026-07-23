@@ -178,13 +178,18 @@ function renderizarUI(lista) {
 
         const marker = L.marker([item.latitud, item.longitud], { icon: mIcon });
         
-        const bHTML = esAtendida 
-            ? `<button onclick="eliminarAlerta(${item.id})" class="mt-3 w-full bg-slate-200 hover:bg-red-600 text-slate-700 py-1.5 rounded text-xs font-bold transition">Borrar</button>`
-            : `<div class="mt-3 flex gap-2">
-                 <button onclick="marcarAtendida(${item.id})" class="flex-1 bg-green-500 text-white py-1.5 rounded text-[11px] font-bold">Atender</button>
-                 <button onclick="eliminarAlerta(${item.id})" class="flex-1 bg-slate-300 text-slate-700 hover:bg-red-600 py-1.5 rounded text-[11px] font-bold">Eliminar</button>
-               </div>`;
-
+       // 🔥 Si la app móvil lo está abriendo, mostramos estado limpio. Si es el ECU 911, mostramos botones de control.
+const bHTML = cedulaUsuarioMovil 
+    ? `<div class="mt-2 p-2 bg-red-50 rounded border border-red-200 text-center">
+         <p class="text-xs font-black text-red-700">🚨 EMERGENCIA ACTIVA</p>
+         <p class="text-[10px] text-slate-600 mt-1">Unidad y ruta segura en camino</p>
+       </div>`
+    : (esAtendida 
+        ? `<button onclick="eliminarAlerta(${item.id})" class="mt-3 w-full bg-slate-200 hover:bg-red-600 text-slate-700 py-1.5 rounded text-xs font-bold transition">Borrar</button>`
+        : `<div class="mt-3 flex gap-2">
+             <button onclick="marcarAtendida(${item.id})" class="flex-1 bg-green-500 text-white py-1.5 rounded text-[11px] font-bold">Atender</button>
+             <button onclick="eliminarAlerta(${item.id})" class="flex-1 bg-slate-300 text-slate-700 hover:bg-red-600 py-1.5 rounded text-[11px] font-bold">Eliminar</button>
+           </div>`);
         marker.bindPopup(`<div class="w-48 text-center p-1"><div class="${esAtendida ? 'text-green-600' : 'text-red-600'} font-black text-sm mb-1">${esAtendida ? '✅ ATENDIDA' : '🚨 ALERTA'}</div><p class="font-bold text-xs">${escapeHTML(item.nombres)}</p><p class="text-[10px] text-slate-500">${item.descripcion}</p>${bHTML}</div>`);
         emergenciasLayerGroup.addLayer(marker);
         marcadoresGuardados[item.id] = marker;
@@ -211,6 +216,20 @@ function renderizarUI(lista) {
         tbody.appendChild(tr);
         obtenerCalleRiobambaConPausa(item.latitud, item.longitud, item.id, index);
     });
+    // 🔥 AUTO-TRAZADO MÓVIL: Si es el ciudadano en su cel, trazamos la ruta al punto seguro automáticamente
+    if (cedulaUsuarioMovil && lista.length > 0) {
+        const alertaCiudadano = lista[0];
+        if (alertaCiudadano.latitud && alertaCiudadano.longitud) {
+            setTimeout(() => {
+                map.setView([alertaCiudadano.latitud, alertaCiudadano.longitud], 16, { animate: true });
+                if (marcadoresGuardados[alertaCiudadano.id]) {
+                    marcadoresGuardados[alertaCiudadano.id].openPopup();
+                }
+                // Dibuja la línea de ruta hacia la UPC o el Hospital base
+                trazarRutaMasCercana(alertaCiudadano.latitud, alertaCiudadano.longitud, alertaCiudadano.descripcion);
+            }, 600);
+        }
+    }
 }
 
 function aplicarFiltros() {
