@@ -1,5 +1,5 @@
 // ==========================================
-// 1. CONFIGURACIÓN DEL MAPA Y CAPAS
+// 1. CONFIGURACIÓN DEL MAPA Y SUPABASE SDK
 // ==========================================
 const RIOBAMBA_CENTER = [-1.665, -78.654];
 const map = L.map('map', { preferCanvas: true }).setView(RIOBAMBA_CENTER, 14);
@@ -8,14 +8,15 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
     attribution: '© OpenStreetMap, © CartoDB'
 }).addTo(map);
 
+// 🔥 Inicializar Cliente Oficial de Supabase
 const SUPABASE_URL = 'https://phsaujoiuayfzwydxygo.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoc2F1am9pdWF5Znp3eWR4eWdvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2MzU4NjIsImV4cCI6MjEwMDIxMTg2Mn0.drMcjGEiZmVFGYgpPz1u2PN0M1bu_8PXRpD1rGBr7Gg';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Capas Especializadas SICOA
 const emergenciasLayerGroup = L.layerGroup().addTo(map);
 const upcLayerGroup = L.layerGroup().addTo(map);
 const hospitalLayerGroup = L.layerGroup().addTo(map);
-// 🔥 Creación del Mapa de Calor
 let heatLayer = L.heatLayer([], { radius: 25, blur: 15, maxZoom: 15, gradient: {0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red'} });
 let lineaRutaActiva = null; 
 
@@ -54,16 +55,14 @@ function dibujarInfraestructura() {
     });
 }
 
-// Lógica de los Botones GIS del Panel Izquierquierdo
 document.getElementById('toggleUPC')?.addEventListener('change', (e) => e.target.checked ? map.addLayer(upcLayerGroup) : map.removeLayer(upcLayerGroup));
 document.getElementById('toggleHospital')?.addEventListener('change', (e) => e.target.checked ? map.addLayer(hospitalLayerGroup) : map.removeLayer(hospitalLayerGroup));
 document.getElementById('toggleRutas')?.addEventListener('change', (e) => { if(!e.target.checked && lineaRutaActiva) map.removeLayer(lineaRutaActiva); });
 
-// 🔥 Alternar Mapa de Calor vs Puntos Normales
 document.getElementById('toggleHeatmap')?.addEventListener('change', (e) => {
     if (e.target.checked) {
-        map.removeLayer(emergenciasLayerGroup); // Ocultar puntos
-        map.addLayer(heatLayer); // Mostrar Fuego
+        map.removeLayer(emergenciasLayerGroup);
+        map.addLayer(heatLayer);
     } else {
         map.removeLayer(heatLayer);
         map.addLayer(emergenciasLayerGroup);
@@ -118,16 +117,31 @@ function actualizarEstado(ok) {
     const sb = document.getElementById('statusGeoServer');
     if(!sb) return;
     sb.className = ok ? "bg-emerald-500/20 text-emerald-400 text-xs px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center shadow-inner" : "bg-red-500/20 text-red-400 text-xs px-3 py-1.5 rounded-full border border-red-500/30 flex items-center";
-    sb.innerHTML = ok ? '<i class="fa-solid fa-satellite-dish text-emerald-400 mr-2 animate-pulse"></i> WebSocket Activo' : '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
+    sb.innerHTML = ok ? '<i class="fa-solid fa-bolt text-emerald-400 mr-2 animate-pulse"></i> WebSocket Activo (Supabase JS)' : '<i class="fa-solid fa-triangle-exclamation mr-2"></i> Desconectado';
 }
+
+// Capturamos la cédula si viene desde la app móvil
+const urlParams = new URLSearchParams(window.location.search);
+const cedulaUsuarioMovil = urlParams.get('cedula');
 
 async function cargarDatosIniciales() {
     try {
-        const response = await fetch(`${SUPABASE_URL}/rest/v1/alertas?select=*`, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-        if (!response.ok) throw new Error("API Error");
-        rawEmergenciasData = await response.json();
+        // Armamos la consulta base
+        let query = supabase.from('alertas').select('*').order('created_at', { ascending: false });
+        
+        // Si hay una cédula en la URL (alguien abrió desde la app), filtramos la base de datos
+        if (cedulaUsuarioMovil && cedulaUsuarioMovil !== '') {
+            query = query.eq('cedula', cedulaUsuarioMovil);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        rawEmergenciasData = data;
         aplicarFiltros();
-    } catch (e) { actualizarEstado(false); }
+    } catch (e) { 
+        actualizarEstado(false); 
+        console.error("Error al cargar datos:", e); 
+    }
 }
 
 function renderizarUI(lista) {
@@ -135,7 +149,6 @@ function renderizarUI(lista) {
     marcadoresGuardados = {};
     if (lineaRutaActiva) map.removeLayer(lineaRutaActiva); 
     
-    // 🔥 Alimentar datos al Mapa de Calor (Solo alertas no atendidas)
     const puntosCalor = lista.filter(i => i.latitud && i.estado !== 'Atendida').map(i => [i.latitud, i.longitud, 1]);
     heatLayer.setLatLngs(puntosCalor);
 
@@ -151,7 +164,6 @@ function renderizarUI(lista) {
         const esAtendida = item.estado === 'Atendida';
         const esMedica = item.descripcion && item.descripcion.includes("Médica");
         
-        // Marcador Normal
         const pinClass = esAtendida ? "bg-green-600" : "animate-bounce bg-red-600";
         const mIcon = L.divIcon({
             className: 'custom-alert-pin',
@@ -175,7 +187,6 @@ function renderizarUI(lista) {
         const tr = document.createElement('tr');
         tr.className = esAtendida ? "bg-green-50/40 hover:bg-green-100 transition cursor-pointer" : "hover:bg-indigo-50 transition cursor-pointer";
         tr.onclick = () => { 
-            // Si el mapa de calor está activo, lo apagamos para ver el punto enfocado
             if(document.getElementById('toggleHeatmap')?.checked) document.getElementById('toggleHeatmap').click();
             marker.openPopup(); 
             trazarRutaMasCercana(item.latitud, item.longitud, item.descripcion); 
@@ -214,44 +225,56 @@ document.getElementById('btnLimpiarFiltros')?.addEventListener('click', () => {
 });
 document.getElementById('btnRefresh')?.addEventListener('click', cargarDatosIniciales);
 
+// 🔥 Update Optimizado con SDK
 window.marcarAtendida = async function(id) {
     const idx = rawEmergenciasData.findIndex(e => e.id === id);
     if(idx !== -1) { rawEmergenciasData[idx].estado = 'Atendida'; aplicarFiltros(); map.closePopup(); }
-    try { await fetch(`${SUPABASE_URL}/rest/v1/alertas?id=eq.${id}`, { method: 'PATCH', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ estado: 'Atendida' }) }); } catch(e) {}
+    await supabase.from('alertas').update({ estado: 'Atendida' }).eq('id', id);
 };
 
+// 🔥 Delete Optimizado con SDK
 window.eliminarAlerta = async function(id) {
     if(!confirm("¿Eliminar registro?")) return;
     rawEmergenciasData = rawEmergenciasData.filter(e => e.id !== id); aplicarFiltros();
-    try { await fetch(`${SUPABASE_URL}/rest/v1/alertas?id=eq.${id}`, { method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }); } catch(e) {}
+    await supabase.from('alertas').delete().eq('id', id);
 };
 
 // ==========================================
-// 4. WEBSOCKET REALTIME
+// 4. WEBSOCKET REALTIME OFICIAL (SDK)
 // ==========================================
-let socket;
 function initWebSocket() {
-    socket = new WebSocket(`wss://phsaujoiuayfzwydxygo.supabase.co/realtime/v1/websocket?apikey=${SUPABASE_KEY}&vsn=1.0.0`);
-    socket.onopen = () => {
-        actualizarEstado(true);
-        socket.send(JSON.stringify({ "topic": "realtime:public:alertas", "event": "phx_join", "payload": { "config": { "postgres_changes": [{ "event": "INSERT", "schema": "public", "table": "alertas" }] } }, "ref": "1" }));
-        setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ "topic": "phoenix", "event": "heartbeat", "payload": {}, "ref": "hb" })); }, 30000);
-    };
-    socket.onmessage = (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            if (data.event === "postgres_changes" && data.payload?.data) {
-                const nueva = data.payload.data.record;
+    // Nos suscribimos al canal de la tabla 'alertas'
+    supabase
+        .channel('schema-db-changes')
+        .on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'alertas' },
+            (payload) => {
+                console.log("¡Alerta recibida vía WebSocket!", payload);
+                const nueva = payload.new;
+                // Dentro de initWebSocket(), donde dice: const nueva = payload.new;
+// Añade esta línea justo debajo:
+if (cedulaUsuarioMovil && nueva.cedula !== cedulaUsuarioMovil) return;
                 rawEmergenciasData.unshift(nueva);
                 aplicarFiltros();
+                
+                // Animación y zoom al nuevo punto de forma automática
                 if (nueva.latitud && !document.getElementById('toggleHeatmap')?.checked) {
                     map.flyTo([nueva.latitud, nueva.longitud], 16, { animate: true, duration: 1.5 });
-                    setTimeout(() => { marcadoresGuardados[nueva.id]?.openPopup(); trazarRutaMasCercana(nueva.latitud, nueva.longitud, nueva.descripcion); }, 1500);
+                    setTimeout(() => { 
+                        marcadoresGuardados[nueva.id]?.openPopup(); 
+                        trazarRutaMasCercana(nueva.latitud, nueva.longitud, nueva.descripcion); 
+                    }, 1500);
                 }
             }
-        } catch (err) {}
-    };
-    socket.onclose = () => { actualizarEstado(false); setTimeout(initWebSocket, 3000); };
+        )
+        .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                actualizarEstado(true); // Conectado con éxito
+            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                actualizarEstado(false); // Se cayó el internet
+            }
+        });
 }
 
 dibujarInfraestructura(); 
