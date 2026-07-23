@@ -17,7 +17,13 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const emergenciasLayerGroup = L.layerGroup().addTo(map);
 const upcLayerGroup = L.layerGroup().addTo(map);
 const hospitalLayerGroup = L.layerGroup().addTo(map);
-let heatLayer = L.heatLayer([], { radius: 25, blur: 15, maxZoom: 15, gradient: {0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red'} });
+let heatLayer = L.heatLayer([], { 
+    radius: 25, 
+    blur: 15, 
+    maxZoom: 15, 
+    minOpacity: 0.5, // 🔥 Esto hace que las calles se vean debajo del calor
+    gradient: {0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red'} 
+});
 let lineaRutaActiva = null; 
 
 let rawEmergenciasData = [];
@@ -61,11 +67,10 @@ document.getElementById('toggleRutas')?.addEventListener('change', (e) => { if(!
 
 document.getElementById('toggleHeatmap')?.addEventListener('change', (e) => {
     if (e.target.checked) {
-        map.removeLayer(emergenciasLayerGroup);
-        map.addLayer(heatLayer);
+        // Solo añadimos la mancha de calor, YA NO borramos los puntos
+        map.addLayer(heatLayer); 
     } else {
         map.removeLayer(heatLayer);
-        map.addLayer(emergenciasLayerGroup);
     }
 });
 
